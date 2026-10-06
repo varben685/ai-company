@@ -10,12 +10,12 @@
     "dev": "node scripts/dev.mjs",
     "dev:api": "tsx apps/api/src/main.ts",
     "dev:worker": "tsx apps/worker/src/main.ts",
-    "dev:web": "pnpm --filter @company/web dev",
-    "typecheck": "tsc --noEmit && pnpm --filter @company/web typecheck",
+    "dev:web": "corepack pnpm --filter @company/web dev",
+    "typecheck": "tsc --noEmit && corepack pnpm --filter @company/web typecheck",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "build": "tsup && pnpm --filter @company/web build",
+    "build": "tsup && corepack pnpm --filter @company/web build",
     "db:generate": "prisma generate --schema packages/database/prisma/schema.prisma",
     "db:migrate": "prisma migrate deploy --schema packages/database/prisma/schema.prisma",
     "db:seed": "tsx packages/database/src/seed.ts",
@@ -25,7 +25,7 @@
     "setup:local": "node scripts/setup-local.mjs",
     "start:api": "node dist/api/main.js",
     "start:worker": "node dist/worker/main.js",
-    "start:web": "pnpm --filter @company/web start"
+    "start:web": "corepack pnpm --filter @company/web start"
   },
   "dependencies": {
     "@company/contracts": "workspace:*",
