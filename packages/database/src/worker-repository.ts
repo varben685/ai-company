@@ -315,7 +315,11 @@ export class WorkerRepository {
   }
   pending() {
     return this.db.outboxMessage.findMany({
-      where: { status: "PENDING", nextAttemptAt: { lte: new Date() } },
+      where: {
+        status: "PENDING",
+        kind: "PLAN_REQUESTED",
+        nextAttemptAt: { lte: new Date() },
+      },
       take: 100,
       orderBy: { createdAt: "asc" },
       include: { run: { include: { task: true } } },
@@ -324,6 +328,7 @@ export class WorkerRepository {
   recoverable() {
     return this.db.agentRun.findMany({
       where: {
+        agentType: "PRODUCT",
         status: { in: ["QUEUED", "RUNNING"] },
         outbox: { some: { status: "DISPATCHED" } },
         nextAttemptAt: { lte: new Date() },

@@ -64,3 +64,7 @@ A lease és idempotencia a DB-mellékhatásokat védi. A külső LLM-hívás nem
 Egyetlen külső blocker: az OpenAI live hitelesítő adat/hozzáférés hiánya. Következő M1 acceptance lépés: helyileg konfigurált worker key és modell után `corepack pnpm test:live`, majd az operátor a tényleges terv szemantikai minőségét ellenőrzi. A kulcsot nem kell és nem szabad chatbe küldeni.
 
 M2 minimális következő lépése: izolált development workspace és jogosultsági modell külön specifikációja és acceptance tesztje. Csak ezután köthető a már jóváhagyott konkrét tervhez a korlátos Developer/Reviewer ciklus.
+
+## Later live M1 evidence (2026-10-06)
+
+The `LIVE_VALIDATION_PENDING` statement above is the historical result at the time of the M1 commit. A later, explicitly authorized `corepack pnpm test:live` succeeded with a locally configured worker key. The persisted task `29c11a52-6f3a-46a7-ba14-50cbfec11fcd` has a succeeded OPENAI Product run `fc943a9c-46e0-4a46-8d22-b17beabe5b2a`, an immutable current plan `62c746bc-12a4-4500-a76a-66a9dd029af0`, and is waiting for a human plan decision. The provider reported `gpt-4.1-mini-2025-04-14`, 553 input tokens, 771 output tokens, zero cached input tokens. Its attempt cost remains unknown because the M1 pricing environment was not configured at that time. This is live Product planning evidence, not M2 Developer/Reviewer validation or human acceptance of that plan.

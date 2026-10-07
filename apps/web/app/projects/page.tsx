@@ -76,8 +76,29 @@ export default function Projects() {
               await api("/projects", ProjectView, {
                 name: f.get("name"),
                 description: f.get("description"),
+                ...(f.get("workspaceSourceId")
+                  ? { workspaceSourceId: f.get("workspaceSourceId") }
+                  : {}),
                 context: Object.fromEntries(
-                  contextKeys.map((k) => [k, f.get(k) ?? ""]),
+                  contextKeys.map((k) => [
+                    k,
+                    f.get(k) ||
+                      (f.get("workspaceSourceId") === "sample-todo-v1"
+                        ? {
+                            product:
+                              "Small todo store with createTodo and listTodos. Add completion and optional filtering.",
+                            architecture:
+                              "JavaScript ESM on Node 24; no dependencies.",
+                            codingStandards:
+                              "Keep functions small and preserve existing exports.",
+                            testing:
+                              "Node built-in test runner and fixed platform acceptance suite.",
+                            security: "No network or secrets in the workspace.",
+                            decisions:
+                              "Use the versioned sample-todo-v1 source only.",
+                          }[k]
+                        : ""),
+                  ]),
                 ),
               });
               form.reset();
@@ -90,6 +111,19 @@ export default function Projects() {
           }}
         >
           <h2>Create a project</h2>
+          <label>
+            Workspace source
+            <select name="workspaceSourceId" defaultValue="">
+              <option value="">Planning only</option>
+              <option value="sample-todo-v1">
+                Sample Todo v1 · local Docker
+              </option>
+            </select>
+          </label>
+          <p className="muted">
+            The sample source is used only after you approve a matching plan and
+            explicitly start development.
+          </p>
           <label>
             Project name
             <input

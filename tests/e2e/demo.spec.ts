@@ -98,14 +98,16 @@ test("DEMO: login → project → task → plan → changes → new plan → app
   await page.getByRole("button", { name: "Approve plan" }).click();
   await expect(
     page.getByText(
-      "Plan approved. Development becomes available in Milestone 2.",
+      "Plan approved. Start development explicitly for a matching sample-todo-v1 project and feature.",
     ),
   ).toBeVisible();
   await page.reload();
   await expect(
     page.locator(".task-toolbar").getByText("PLAN APPROVED", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: /developer/i })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Start development" }),
+  ).toBeVisible();
   await expect(page.getByText("PLAN CREATED", { exact: true })).toHaveCount(2);
   await page.screenshot({
     path: ".local/demo-task-approved.png",

@@ -287,6 +287,37 @@ export class PlatformRepository {
           },
         });
       }
+      if (t.activeValidationId) {
+        await tx.validationRun.updateMany({
+          where: {
+            id: t.activeValidationId,
+            status: { in: ["QUEUED", "RUNNING"] },
+          },
+          data: {
+            status: "CANCELLED",
+            ownerToken: null,
+            leaseUntil: null,
+            finishedAt: new Date(),
+            report: json({ status: "CANCELLED", checks: [] }),
+          },
+        });
+      }
+      if (t.developmentSessionId) {
+        await tx.developmentSession.updateMany({
+          where: {
+            id: t.developmentSessionId,
+            status: { in: ["ACTIVE", "FAILED"] },
+          },
+          data: { status: "CANCELLED" },
+        });
+        await tx.workspaceInstance.updateMany({
+          where: {
+            sessionId: t.developmentSessionId,
+            status: { in: ["PREPARING", "ACTIVE"] },
+          },
+          data: { status: "CLEANUP_PENDING" },
+        });
+      }
       await tx.approval.updateMany({
         where: { taskId: id, status: "PENDING" },
         data: {
@@ -297,7 +328,12 @@ export class PlatformRepository {
       });
       const task = await tx.task.update({
         where: { id },
-        data: { status, version: { increment: 1 }, activeRunId: null },
+        data: {
+          status,
+          version: { increment: 1 },
+          activeRunId: null,
+          activeValidationId: null,
+        },
       });
       await event(
         tx,
@@ -392,11 +428,14 @@ export class PlatformRepository {
   }
   async runs(taskId: string) {
     await this.detail(taskId);
-    return this.db.agentRun.findMany({
+    const runs = await this.db.agentRun.findMany({
       where: { taskId },
       orderBy: { createdAt: "asc" },
       select: {
         id: true,
+        agentType: true,
+        sessionId: true,
+        round: true,
         taskId: true,
         projectId: true,
         status: true,
@@ -424,10 +463,58 @@ export class PlatformRepository {
             pricingVersion: true,
             providerRequestId: true,
             errorCode: true,
+            modelCalls: {
+              orderBy: { sequence: "asc" },
+              select: {
+                id: true,
+                sequence: true,
+                status: true,
+                model: true,
+                responseId: true,
+                providerRequestId: true,
+                inputTokens: true,
+                outputTokens: true,
+                cachedInputTokens: true,
+                estimatedCostUsd: true,
+                pricingVersion: true,
+                startedAt: true,
+                finishedAt: true,
+              },
+            },
+            toolExecutions: {
+              orderBy: { createdAt: "asc" },
+              select: {
+                id: true,
+                name: true,
+                inputSummary: true,
+                outcome: true,
+                durationMs: true,
+                outputHash: true,
+                createdAt: true,
+              },
+            },
           },
         },
       },
     });
+    return runs.map((r) => ({
+      ...r,
+      attempts: r.attempts.map((a) => {
+        const known = a.modelCalls.length
+          ? a.modelCalls.reduce(
+              (sum, c) => sum.add(c.estimatedCostUsd ?? 0),
+              new Prisma.Decimal(0),
+            )
+          : a.estimatedCostUsd;
+        return {
+          ...a,
+          estimatedCostUsd: known,
+          unknownModelCalls: a.modelCalls.filter(
+            (c) => c.estimatedCostUsd === null,
+          ).length,
+        };
+      }),
+    }));
   }
   async events(taskId: string, page: number, limit: number) {
     await this.detail(taskId);
@@ -448,34 +535,59 @@ export class PlatformRepository {
       activeTasks,
       pendingApprovals,
       runs,
-      cost,
-      unknownAttempts,
+      legacyCost,
+      unknownLegacyAttempts,
+      modelCost,
+      unknownModelCalls,
     ] = await Promise.all([
       this.db.project.count(),
       this.db.task.count({
         where: {
           status: {
-            in: ["QUEUED_FOR_PLANNING", "PLANNING", "WAITING_PLAN_APPROVAL"],
+            in: [
+              "QUEUED_FOR_PLANNING",
+              "PLANNING",
+              "WAITING_PLAN_APPROVAL",
+              "QUEUED_FOR_IMPLEMENTATION",
+              "IMPLEMENTING",
+              "QUEUED_FOR_VALIDATION",
+              "VALIDATING",
+              "QUEUED_FOR_REVIEW",
+              "REVIEWING",
+              "WAITING_FINAL_APPROVAL",
+            ],
           },
         },
       }),
       this.db.approval.count({ where: { status: "PENDING" } }),
       this.db.agentRun.count(),
-      this.db.agentRunAttempt.aggregate({ _sum: { estimatedCostUsd: true } }),
-      this.db.agentRunAttempt.count({ where: { estimatedCostUsd: null } }),
+      this.db.agentRunAttempt.aggregate({
+        where: { modelCalls: { none: {} } },
+        _sum: { estimatedCostUsd: true },
+      }),
+      this.db.agentRunAttempt.count({
+        where: { modelCalls: { none: {} }, estimatedCostUsd: null },
+      }),
+      this.db.modelCall.aggregate({ _sum: { estimatedCostUsd: true } }),
+      this.db.modelCall.count({ where: { estimatedCostUsd: null } }),
     ]);
     return {
       projects,
       activeTasks,
       pendingApprovals,
       runs,
-      knownEstimatedCostUsd:
-        cost._sum.estimatedCostUsd?.toFixed(8) ?? "0.00000000",
+      knownEstimatedCostUsd: (
+        legacyCost._sum.estimatedCostUsd ?? new Prisma.Decimal(0)
+      )
+        .add(modelCost._sum.estimatedCostUsd ?? 0)
+        .toFixed(8),
       currency: "USD",
-      unknownAttempts,
+      unknownAttempts: unknownLegacyAttempts + unknownModelCalls,
     };
   }
 }
 export type SavedPlan = ProductPlan;
 
 export * from "./worker-repository";
+export * from "./m2-repository";
+export * from "./m2-worker-repository";

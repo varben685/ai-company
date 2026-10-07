@@ -1,8 +1,10 @@
-# AI Software Company · M1
+# AI Software Company · M1 + M2
 
-Futtatható, egyoperátoros helyi tervezőplatform. Projekt → task → tartós planning queue → ProductPlan → emberi döntés. A végállapot **PLAN_APPROVED**; a fejlesztés M2-ben válik elérhetővé.
+Runnable single-operator local platform: project → task → durable Product planning → human plan approval → explicit sample development → independent validation → separate review → human approval of exact code → **DONE**. M1 still ends at **PLAN_APPROVED** until the operator starts M2 development.
 
 A DEMO adapter determinisztikus, nem valódi AI. Az OPENAI adapter az `@openai/agents` SDK-t és a Responses API-t használja, strukturált Zod kimenettel. Nincs automatikus fallback.
+
+M2 supports only the versioned `sample-todo-v1` JavaScript ESM source and its fixed acceptance tests. It does not clone repositories, open PRs, merge, or deploy. The Developer gets bounded sample file tools and named checks inside Docker; the Reviewer receives readonly frozen artifacts. See [M2 acceptance](docs/MILESTONE-2.md) and [M2 specification](docs/MILESTONE-2-SPEC.md).
 
 ## Helyi indítás
 
@@ -39,6 +41,7 @@ Build után a `corepack pnpm start:api`, `corepack pnpm start:worker`, `corepack
 3. Terv átnézése: requirements, acceptance criteria, steps, assumptions, questions, risks, complexity.
 4. **Approve plan**, kommenttel **Request changes**, vagy **Reject plan**. Régebbi verzión nincs döntési gomb. Összesen legfeljebb 5 tervverzió készülhet.
 5. Hiba után **Retry planning** új logical runt hoz létre; a régi attempts megmaradnak. **Cancel task** azonnal lezárja a taskot és a pending approvalt. Kései eredmény nem publikálhat tervet.
+6. For M2, create a project with **Sample Todo v1 · local Docker**, leave its default sample context or provide matching JavaScript/Node context, and create a task about completing todos. Review and approve its plan, then press **Start development**. The UI shows the immutable candidate, cumulative diff, independent checks, and separate review. Approve or reject the exact candidate only after reviewing these. A passing approval marks the task **DONE** without merging or deploying. Failed infrastructure stages can be retried; review changes create at most three rounds. **Cancel task** stops further publication.
 
 Régi taskverzió vagy approval esetén 409 konfliktus érkezik, érthető frissítési üzenettel. A nézet frissíti az aktuális adatokat. Aktív tervezésnél 2 másodperces polling működik; terminális tasknál leáll.
 
@@ -56,13 +59,15 @@ Ez az **egyetlen, explicit live Product Agent smoke** fizetős API-hívást vég
 
 A workerben mindkét SDK retry kikapcsolt; maximum 3 DB-ben számolt attempt, alapértelmezésben attemptenként 120 s timeout és queue-szinten 1 concurrency. `ATTEMPT_TIMEOUT_MS` 100–300000, `LEASE_MS` 1000–120000; `PLANNING_CONCURRENCY` csak 1 lehet. A queued run megőrzi provider/model választását akkor is, ha a processz beállítása később megváltozik.
 
+For M2 live agents, set `OPENAI_DEVELOPER_MODEL` and `OPENAI_REVIEWER_MODEL` in `.env` (defaults: `gpt-4.1-mini`). The key remains only in ignored `.env.worker`. The installed `@openai/agents` SDK runs the Developer with registered file tools and Reviewer with readonly tools; each Responses call has a separate usage/cost ledger. Run `corepack pnpm test:live:m2` once to generate a real Product plan for a new sample project. Review and approve that plan in the local UI. Then run `M2_LIVE_TASK_ID=<approved-task-uuid> corepack pnpm test:live:m2` to start one bounded development session and leave final code approval pending. The script starts its own local worker; no other live worker is needed. Do not auto-approve the plan or code in the smoke.
+
 ## Költségadatok
 
 A költség **becslés, nem számla**. A worker `.env.worker` fájljában opcionálisan add meg: `PRICING_MODEL` (a válaszban ténylegesen jelentett modell), `PRICING_VERSION`, `PRICE_INPUT_PER_MILLION`, `PRICE_CACHED_PER_MILLION`, `PRICE_OUTPUT_PER_MILLION`. Mindhárom tarifa decimális USD / egymillió token. Nincs beégetett, idővel elévülő ár.
 
 Képlet: `(input − cached) × inputPrice + cached × cachedPrice + output × outputPrice`, osztva egymillióval. Hiányzó usage, hiányzó cached adat, ismeretlen/hibás tarifa vagy eltérő modell → **Unknown**. A dashboard az ismert összeget és az ismeretlen attemptök számát külön mutatja. A sikertelen, megszakított és kései attempt ismert költsége is megmarad. DEMO: 0 USD, külön providerjelzéssel.
 
-Nincs garantált havi költségplafon vagy exactly-once LLM hívás. Crash utáni új attempt ismét költséget okozhat. A cancellation nem garantálja, hogy a provider már elindított munkája ingyenes.
+M2 adds per-Responses-call ledger entries. The dashboard counts these calls, including known cost on failed attempts, and counts unknown calls separately. Legacy M1 attempt cost is included only when that attempt has no call entries. The default exact `gpt-4.1-mini-2025-04-14` tariff is versioned in code; other model prices remain unknown unless explicitly configured. Nincs garantált havi költségplafon vagy exactly-once LLM hívás. Crash utáni új attempt ismét költséget okozhat. A cancellation nem garantálja, hogy a provider már elindított munkája ingyenes.
 
 ## Tesztek
 
@@ -78,7 +83,7 @@ corepack pnpm test:e2e
 M1_E2E_BUILT=1 corepack pnpm test:e2e
 ```
 
-A backendtesztek valós PostgreSQL/Redis mellett, véletlen nevű külön adatbázissémában és queue prefixszel futnak. Csak a saját tesztsémájukat törlik. Az E2E ugyancsak külön sémát/queue-t kap, és három valódi processzt indít DEMO módban. A 3000/3001 port legyen szabad. A tesztekhez nincs OpenAI kulcs és nincs fizetős API-hívás. A screenshot `.local/demo-task-approved.png`; hiba esetén trace és screenshot a `test-results/` alatt.
+A backendtesztek valós PostgreSQL/Redis és M2-höz valós Docker mellett, véletlen nevű külön adatbázissémában és queue prefixszel futnak. Csak a saját tesztsémájukat törlik. Az E2E ugyancsak külön sémát/queue-t kap, és három valódi processzt indít DEMO módban. A 3000/3001 port legyen szabad. Install the pinned workspace image with `docker pull node@sha256:775ba24d35a13e74dedce1d2af4ad510337b68d8e22be89e0ce2ccc299329083` during trusted setup; no dependency installation occurs inside an agent workspace. A tesztekhez nincs OpenAI kulcs és nincs fizetős API-hívás.
 
 Fedezet: konkurens commandok, tartós idempotency receipts, rollback, outbox crash/újrakézbesítés, globális queue concurrency, lejárt lease és stale write, **valódi SIGKILL worker crash és restart**, cancellation, provider error/refusal/invalid output, bounded retry, régi approval, approve/reject verseny, revision limit, cross-project FK-k, immutable snapshotok/tervek, usage és cached költségszámítás. E2E: login → projekt → task → plan → changes → új plan → approve → reload.
 
@@ -99,8 +104,6 @@ Az audit csak szükséges üzleti metadatát tartalmaz. Provider nyers hibát, k
 
 ## Felépítés és folytatás
 
-`apps/api`: NestJS REST, session és service/repository határ. `apps/web`: Next.js App Router. `apps/worker`: BullMQ worker és outbox reconciliation. `packages/contracts`: Zod; `database`: Prisma/migráció/repository; `workflow`: determinisztikus szabályok; `agents`: Product Agent és adapterek; `integrations`: Redis/BullMQ; `observability`: konfiguráció, safe logging, decimal pricing.
+`apps/api`: NestJS REST, session és service/repository határ. `apps/web`: Next.js App Router. `apps/worker`: BullMQ worker és outbox reconciliation. `packages/contracts`: Zod; `database`: Prisma/migráció/repository; `workflow`: determinisztikus szabályok; `agents`: Product, Developer, Reviewer adapterek; `integrations`: Redis/BullMQ; `workspace`: pinned sample source, Docker backend, immutable artifacts, independent validator; `observability`: konfiguráció, safe logging, decimal pricing.
 
-Részletek: [specifikáció](docs/SPEC.md), [architekturális döntések](docs/DECISIONS.md), [aktuális elfogadási eredmények](docs/MILESTONE-1.md).
-
-M2 legkisebb következő lépése: külön specifikálni és tesztelni az izolált development workspace-et és jogosultságait. Utána lehet a konkrét approved planhoz kötött Developer/Reviewer ciklust megépíteni. M1 nem hoz létre development jobot, PR-t, merge-öt vagy deployt.
+Részletek: [M1 specifikáció](docs/SPEC.md), [M2 specifikáció](docs/MILESTONE-2-SPEC.md), [architekturális döntések](docs/DECISIONS.md), [M1 elfogadás](docs/MILESTONE-1.md), [M2 elfogadás](docs/MILESTONE-2.md).

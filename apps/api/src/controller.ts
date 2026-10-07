@@ -63,6 +63,9 @@ export class ApiController {
   @Get("projects/:id") project(@Param("id") id: string) {
     return this.service.project(id);
   }
+  @Get("workspace-sources") sources() {
+    return this.service.sources();
+  }
   @Post("projects/:id/tasks") createTask(
     @Param("id") id: string,
     @Body() b: unknown,
@@ -87,6 +90,42 @@ export class ApiController {
     @Query() q: unknown,
   ) {
     return this.service.events(id, q);
+  }
+  @Get("tasks/:id/development") development(@Param("id") id: string) {
+    return this.service.development(id);
+  }
+  @Post("tasks/:id/develop") @HttpCode(202) develop(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() req: OperatorRequest,
+  ) {
+    return this.service.develop(id, body, req);
+  }
+  @Post("tasks/:id/retry-stage") @HttpCode(202) retryStage(
+    @Param("id") id: string,
+    @Body() body: unknown,
+    @Req() req: OperatorRequest,
+  ) {
+    return this.service.retryStage(id, body, req);
+  }
+  @Get("artifacts/:id") artifact(@Param("id") id: string) {
+    return this.service.artifact(id);
+  }
+  @Get("artifacts/:id/content") artifactContent(@Param("id") id: string) {
+    return this.service.artifactContent(id);
+  }
+  @Get("artifacts/:id/download") async artifactDownload(
+    @Param("id") id: string,
+    @Res() response: Response,
+  ) {
+    const archive = await this.service.artifactDownload(id);
+    response.setHeader("Content-Type", "application/x-tar");
+    response.setHeader(
+      "Content-Disposition",
+      'attachment; filename="sample-todo-v1.tar"',
+    );
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.send(archive);
   }
   @Post("tasks/:id/plan") @HttpCode(202) plan(
     @Param("id") id: string,

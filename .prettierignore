@@ -1,5 +1,6 @@
 pnpm-lock.yaml
 docs/SPEC.md
+docs/MILESTONE-2-SPEC.md
 dist
 .next
 node_modules

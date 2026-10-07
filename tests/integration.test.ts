@@ -772,6 +772,38 @@ describe("HTTP session, input, origin and command boundaries", () => {
       expect(t.status).toBe(201);
       const tbody = (await t.json()) as { id: string };
       expect(
+        (await fetch(base + "/workspace-sources", { headers })).status,
+      ).toBe(200);
+      expect(
+        (await fetch(base + `/tasks/${tbody.id}/development`, { headers }))
+          .status,
+      ).toBe(200);
+      const noM2Csrf = await fetch(base + `/tasks/${tbody.id}/develop`, {
+        method: "POST",
+        headers: {
+          ...headers,
+          "X-CSRF-Token": "bad",
+          "Idempotency-Key": randomUUID(),
+        },
+        body: JSON.stringify({
+          approvedPlanId: randomUUID(),
+          expectedTaskVersion: 1,
+          sourceId: "sample-todo-v1",
+        }),
+      });
+      expect(noM2Csrf.status).toBe(403);
+      const invalidM2 = await fetch(base + `/tasks/${tbody.id}/develop`, {
+        method: "POST",
+        headers: { ...headers, "Idempotency-Key": randomUUID() },
+        body: JSON.stringify({
+          approvedPlanId: randomUUID(),
+          expectedTaskVersion: 1,
+          sourceId: "sample-todo-v1",
+          status: "DONE",
+        }),
+      });
+      expect(invalidM2.status).toBe(400);
+      expect(
         (
           await fetch(base + `/tasks/${tbody.id}/plan`, {
             method: "POST",
@@ -794,7 +826,10 @@ describe("HTTP session, input, origin and command boundaries", () => {
       ).toBe(404);
       const spec = await fetch(base + "/openapi.json", { headers });
       expect(spec.status).toBe(200);
-      expect((await spec.json()).openapi).toBe("3.1.0");
+      const openapi = await spec.json();
+      expect(openapi.openapi).toBe("3.1.0");
+      expect(openapi.paths).toHaveProperty("/tasks/{id}/develop");
+      expect(openapi.paths).toHaveProperty("/artifacts/{id}/download");
       const logout = await fetch(base + "/auth/logout", {
         method: "POST",
         headers,

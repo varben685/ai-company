@@ -7,7 +7,12 @@ import {
   priorityOrder,
   openApi,
 } from "@company/contracts";
-import { transition, checkApproval, backoff } from "@company/workflow";
+import {
+  transition,
+  checkApproval,
+  backoff,
+  requiredValidationPass,
+} from "@company/workflow";
 import {
   estimate,
   pricingFromEnv,
@@ -23,6 +28,33 @@ import {
 import { input, plan, project, responseBody } from "./fixtures";
 const options = { signal: new AbortController().signal, runId: input.runId };
 describe("deterministic contracts and workflow", () => {
+  it("does not accept incomplete or zero-test validation reports", () => {
+    const checks = [
+      {
+        commandId: "regression",
+        exitCode: 0,
+        timedOut: false,
+        output: "ℹ tests 1",
+      },
+      {
+        commandId: "acceptance",
+        exitCode: 0,
+        timedOut: false,
+        output: "ℹ tests 3",
+      },
+      { commandId: "syntax", exitCode: 0, timedOut: false, output: "" },
+    ];
+    expect(requiredValidationPass({ status: "PASS", checks })).toBe(true);
+    expect(
+      requiredValidationPass({ status: "PASS", checks: checks.slice(1) }),
+    ).toBe(false);
+    expect(
+      requiredValidationPass({
+        status: "PASS",
+        checks: [{ ...checks[0], output: "ℹ tests 0" }, ...checks.slice(1)],
+      }),
+    ).toBe(false);
+  });
   it("rejects extra input fields, excessive input and invalid plan semantics", () => {
     expect(() =>
       CreateTask.parse({ ...input.task, status: "PLAN_APPROVED" }),

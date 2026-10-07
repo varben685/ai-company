@@ -40,6 +40,9 @@ export default function Project({
         title={project.data?.name ?? "Project"}
       >
         {project.data?.description}
+        {project.data?.workspaceSourceId && (
+          <> · Source: {project.data.workspaceSourceId}</>
+        )}
       </Heading>
       <ErrorBox message={project.error || tasks.error || error} />
       {project.data && (
@@ -78,6 +81,16 @@ export default function Project({
                 "PLANNING",
                 "WAITING_PLAN_APPROVAL",
                 "PLAN_APPROVED",
+                "QUEUED_FOR_IMPLEMENTATION",
+                "IMPLEMENTING",
+                "QUEUED_FOR_VALIDATION",
+                "VALIDATING",
+                "QUEUED_FOR_REVIEW",
+                "REVIEWING",
+                "WAITING_FINAL_APPROVAL",
+                "HUMAN_REVIEW_REQUIRED",
+                "BLOCKED",
+                "DONE",
                 "FAILED",
                 "REJECTED",
                 "CANCELLED",

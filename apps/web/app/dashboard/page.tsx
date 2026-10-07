@@ -10,11 +10,9 @@ export default function Dashboard() {
   );
   return (
     <>
-      <Heading
-        eyebrow="WORKSPACE OVERVIEW"
-        title="From intent to a clear plan."
-      >
-        Give your Product Agent the context. Keep every decision in your hands.
+      <Heading eyebrow="WORKSPACE OVERVIEW" title="From plan to reviewed code.">
+        Plan with your Product Agent, then start development explicitly on the
+        sample source. You approve the final code package.
       </Heading>
       <ErrorBox message={error} />
       {loading ? (
@@ -60,7 +58,7 @@ export default function Dashboard() {
                   <span>
                     03
                     <br />
-                    Review
+                    Validate & review
                   </span>
                 </div>
               </section>
@@ -80,7 +78,9 @@ export default function Dashboard() {
             <div className="boundary">
               <strong>Built for a deliberate handoff.</strong>
               <p>
-                Plan approved. Development becomes available in Milestone 2.
+                An approved plan can start an isolated sample development run.
+                DONE means the code package was accepted; nothing is merged or
+                deployed.
               </p>
             </div>
           </>

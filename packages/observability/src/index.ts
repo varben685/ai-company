@@ -6,6 +6,8 @@ export const CommonEnv = z.object({
   REDIS_URL: z.url(),
   PROVIDER: z.enum(["DEMO", "OPENAI"]).default("DEMO"),
   OPENAI_PRODUCT_MODEL: z.string().default("gpt-4.1-mini"),
+  OPENAI_DEVELOPER_MODEL: z.string().default("gpt-4.1-mini"),
+  OPENAI_REVIEWER_MODEL: z.string().default("gpt-4.1-mini"),
 });
 export const ApiEnv = CommonEnv.extend({
   OPERATOR_PASSWORD: z.string().min(24),
@@ -68,6 +70,24 @@ export function pricingFromEnv(env = process.env): Pricing | null {
     output: env.PRICE_OUTPUT_PER_MILLION,
   });
   return p.success ? p.data : null;
+}
+export function pricingForModel(
+  model: string | null,
+  env = process.env,
+): Pricing | null {
+  if (!model) return null;
+  const custom = pricingFromEnv(env);
+  if (custom?.model === model) return custom;
+  // Official model page checked 2026-10-06. Exact snapshot only; other models remain unknown.
+  if (model === "gpt-4.1-mini-2025-04-14")
+    return {
+      model,
+      version: "openai-model-page-2026-10-06",
+      input: "0.40",
+      cached: "0.10",
+      output: "1.60",
+    };
+  return null;
 }
 export function estimate(
   provider: string,
