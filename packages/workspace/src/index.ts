@@ -338,7 +338,7 @@ process.stdin.on('end',()=>{try{
  const parts=q.path?.split('/')??[]; let current=base;
  for(const p of parts){current=path.join(current,p);if(fs.existsSync(current)){const s=fs.lstatSync(current);if(s.isSymbolicLink()||(!s.isDirectory()&&!s.isFile())||(s.isFile()&&s.nlink>1))throw Error('UNSAFE_FILE_TYPE')}}
  if(q.op==='list'){const result=[];for(const d of ['README.md','package.json','src','test']){const p=path.join(base,d);if(!fs.existsSync(p))continue;const s=fs.lstatSync(p);if(s.isSymbolicLink())throw Error('UNSAFE_FILE_TYPE');if(s.isFile())result.push(d);else for(const x of fs.readdirSync(p)){const f=d+'/'+x;if(!valid(f)||!fs.lstatSync(path.join(base,f)).isFile())throw Error('UNSAFE_FILE_TYPE');result.push(f)}}process.stdout.write(JSON.stringify(result.sort().slice(0,Math.min(q.limit??100,200))));}
- else if(q.op==='read'){const b=fs.readFileSync(target);if(b.length>262144)throw Error('FILE_TOO_LARGE');const lines=b.toString('utf8').split('\n');process.stdout.write(JSON.stringify({content:lines.slice(q.startLine-1,q.endLine).join('\n'),totalLines:lines.length}));}
+ else if(q.op==='read'){const b=fs.readFileSync(target);if(b.length>262144)throw Error('FILE_TOO_LARGE');const lines=b.toString('utf8').split('\n');const hash=require('node:crypto').createHash('sha256').update(b).digest('hex');process.stdout.write(JSON.stringify({content:lines.slice(q.startLine-1,q.endLine).join('\n'),totalLines:lines.length,hash}));}
  else if(q.op==='write'){if(Buffer.byteLength(q.content,'utf8')>262144)throw Error('FILE_TOO_LARGE');const old=fs.existsSync(target)?fs.readFileSync(target):null;const h=require('node:crypto').createHash('sha256');if((old?h.update(old).digest('hex'):null)!==q.expectedHash)throw Error('STALE_FILE');fs.mkdirSync(path.dirname(target),{recursive:true});const tmp=target+'.tmp-'+process.pid;fs.writeFileSync(tmp,q.content,{flag:'wx',mode:0o666});fs.renameSync(tmp,target);process.stdout.write(JSON.stringify({hash:require('node:crypto').createHash('sha256').update(q.content).digest('hex')}));}
  else throw Error('UNKNOWN_OPERATION');
 }catch(e){process.stderr.write(String(e.message).slice(0,120));process.exitCode=2}});
@@ -521,7 +521,7 @@ export class DockerWorkspaceBackend {
       path: p,
       startLine: 1,
       endLine: 400,
-    })) as { content: string; totalLines: number };
+    })) as { content: string; totalLines: number; hash: string };
     if (read.totalLines > 400) throw new WorkspaceError("PATCH_FILE_TOO_LONG");
     const lines = read.content.split("\n");
     const hunk = match[2]!.split("\n").filter((x) => x !== "");
@@ -543,13 +543,12 @@ export class DockerWorkspaceBackend {
         at = i;
       }
     if (at < 0) throw new WorkspaceError("STALE_PATCH");
-    const original = read.content;
     lines.splice(at, old.length, ...next);
     return this.tool(h, {
       op: "write",
       path: p,
       content: lines.join("\n"),
-      expectedHash: hashBytes(original),
+      expectedHash: read.hash,
     });
   }
   async previewDiff(h: WorkspaceHandle, baseline: Snapshot) {

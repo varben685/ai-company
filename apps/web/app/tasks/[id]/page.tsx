@@ -19,6 +19,7 @@ import {
   Status,
   accepted,
   Pager,
+  requestId,
 } from "../../../components/ui";
 const runsSchema = z.array(RunView);
 const eventsSchema = pageOf(EventView);
@@ -113,7 +114,7 @@ export default function Task({ params }: { params: Promise<{ id: string }> }) {
             expectedTaskVersion: t.version,
             ...(comment ? { comment } : {}),
           },
-          crypto.randomUUID(),
+          requestId(),
         );
         setSelected(null);
         setComment("");
@@ -127,7 +128,7 @@ export default function Task({ params }: { params: Promise<{ id: string }> }) {
             expectedTaskVersion: t.version,
             sourceId: "sample-todo-v1",
           },
-          crypto.randomUUID(),
+          requestId(),
         );
       } else if (action === "retry-stage") {
         const stage = t.failureStage;
@@ -147,7 +148,7 @@ export default function Task({ params }: { params: Promise<{ id: string }> }) {
           `/tasks/${id}/retry-stage`,
           accepted,
           { expectedTaskVersion: t.version, failureStage: stage, targetId },
-          crypto.randomUUID(),
+          requestId(),
         );
       } else if (action === "approve-code" || action === "reject-code") {
         const final = t.approvals.find(
@@ -180,10 +181,9 @@ export default function Task({ params }: { params: Promise<{ id: string }> }) {
             expectedTaskVersion: t.version,
             ...(comment ? { comment } : {}),
           },
-          crypto.randomUUID(),
+          requestId(),
         );
-      } else
-        await api(`/tasks/${id}/${action}`, accepted, {}, crypto.randomUUID());
+      } else await api(`/tasks/${id}/${action}`, accepted, {}, requestId());
       await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Request failed");

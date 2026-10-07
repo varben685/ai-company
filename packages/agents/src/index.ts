@@ -5,6 +5,10 @@ import {
   Runner,
   tool,
   OpenAIProvider as SDKProvider,
+  ModelBehaviorError,
+  SystemError,
+  ToolCallError,
+  ToolTimeoutError,
 } from "@openai/agents";
 import OpenAI from "openai";
 import {
@@ -126,6 +130,20 @@ export function classifyError(
     return new ProviderError("PROVIDER_NETWORK", true, metadata);
   if (e?.name === "APIUserAbortError")
     return new ProviderError("PROVIDER_ABORTED", false, metadata);
+  if (e?.name === "MaxTurnsExceededError")
+    return new ProviderError("AGENT_LIMIT_REACHED", false, metadata);
+  if (e?.name === "InvalidToolInputError")
+    return new ProviderError("AGENT_INVALID_TOOL_INPUT", false, metadata);
+  if (error instanceof ToolTimeoutError)
+    return new ProviderError("AGENT_TOOL_TIMEOUT", true, metadata);
+  if (error instanceof ToolCallError)
+    return new ProviderError("AGENT_TOOL_FAILED", false, metadata);
+  if (error instanceof ModelBehaviorError)
+    return new ProviderError("INVALID_STRUCTURED_OUTPUT", false, metadata);
+  if (error instanceof SystemError)
+    return new ProviderError("PROVIDER_INTERNAL", true, metadata);
+  if (e?.name === "ModelRefusalError")
+    return new ProviderError("PROVIDER_REFUSAL", false, metadata);
   if (e?.name === "AbortError" || e?.name === "TimeoutError")
     return new ProviderError("PROVIDER_TIMEOUT", true, metadata);
   if (e?.status === 400 || e?.status === 404)
@@ -273,7 +291,8 @@ function workspaceTools(
     }),
     tool({
       name: "read_file",
-      description: "Read a bounded line range of an allowed file.",
+      description:
+        "Read an allowed file and return content, totalLines, and its current SHA-256 hash. Use startLine=1 and endLine=400 to read the whole sample file; 1 <= startLine <= endLine <= 400.",
       parameters: z
         .object({
           path: z.string(),
@@ -315,7 +334,7 @@ function workspaceTools(
     tool({
       name: "write_file",
       description:
-        "Write one allowed file using its current SHA-256 hash, or null when creating it.",
+        "Write one allowed file. First call read_file and copy its returned hash exactly into expectedHash; use null only when creating a new file.",
       parameters: z
         .object({
           path: z.string(),
