@@ -232,6 +232,47 @@ const responseMetadata = z.object({
     )
     .optional(),
 });
+const SAFE_ERROR_CODE = /^[A-Z][A-Z0-9_]{1,79}$/;
+/** Reduces a tool failure to a fixed code; raw messages may contain paths or provider details. */
+export function toolErrorCode(error: unknown): string {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === "string" && SAFE_ERROR_CODE.test(code)) return code;
+  const message = error instanceof Error ? error.message : "";
+  return SAFE_ERROR_CODE.test(message) ? message : "TOOL_FAILED";
+}
+const PATCH_FORMAT =
+  "Send exactly: '*** Begin Patch\n*** Update File: <path>\n@@\n<lines>\n*** End Patch', where every line starts with ' ' (unchanged), '-' (remove) or '+' (add), and include at least one unchanged or removed line copied exactly from read_file.";
+const toolErrorHints: Record<string, string> = {
+  STALE_FILE:
+    "expectedHash does not match the file's current content. Call read_file for this path and copy its hash field exactly; use null only when the file does not exist yet.",
+  INVALID_PATCH: `${PATCH_FORMAT} To create a new file use write_file with expectedHash null.`,
+  PATCH_ONE_HUNK_ONLY: `Send one @@ hunk per apply_patch call. ${PATCH_FORMAT}`,
+  STALE_PATCH:
+    "The unchanged/removed lines were not found exactly. Call read_file again and copy them exactly, or use write_file with the full new content.",
+  AMBIGUOUS_PATCH:
+    "The unchanged/removed lines match more than one location. Add more unchanged lines around the change.",
+  PATCH_FILE_TOO_LONG: "Use write_file for files longer than 400 lines.",
+  DISALLOWED_PATH:
+    "Only README.md, package.json, src/<name>.js and test/<name>.test.mjs are allowed. Call list_files to see the existing files.",
+  FILE_NOT_FOUND:
+    "The file does not exist. Call list_files to see the existing files, or create it with write_file and expectedHash null.",
+  INVALID_SLICE: "Use 1 <= startLine <= endLine with at most 400 lines.",
+  INVALID_SEARCH:
+    "Use a non-empty query up to 200 characters, at most 30 paths and 1 <= limit <= 100.",
+  FILE_TOO_LARGE: "Files are limited to 256 KiB.",
+  PATCH_TOO_LARGE: "Patches are limited to 64 KiB; use smaller hunks.",
+  TOOL_OUTPUT_LIMIT: "The result was too large; request a narrower range.",
+};
+/** Tool failures go back to the model as a fixed code and recovery hint so it can correct its call. */
+export function toolErrorResult(error: unknown): string {
+  const code = toolErrorCode(error);
+  return JSON.stringify({
+    error: code,
+    hint:
+      toolErrorHints[code] ??
+      "The tool call failed. Change the arguments instead of repeating the same call.",
+  });
+}
 function workspaceTools(
   definition: AgentDefinition<unknown>,
   options: AgentOptions,
@@ -263,10 +304,7 @@ function workspaceTools(
       outputHash = createHash("sha256").update(output).digest("hex");
       return output;
     } catch (e) {
-      outcome =
-        e instanceof Error && "code" in e
-          ? String(e.code).slice(0, 80)
-          : "TOOL_FAILED";
+      outcome = toolErrorCode(e);
       throw e;
     } finally {
       await options.onTool?.({
@@ -281,6 +319,7 @@ function workspaceTools(
   };
   const common = [
     tool({
+      errorFunction: (_context, error) => toolErrorResult(error),
       name: "list_files",
       description: "List allowed sample workspace files.",
       parameters: z
@@ -290,6 +329,7 @@ function workspaceTools(
         call("list_files", path, () => workspace.listFiles(path, limit)),
     }),
     tool({
+      errorFunction: (_context, error) => toolErrorResult(error),
       name: "read_file",
       description:
         "Read an allowed file and return content, totalLines, and its current SHA-256 hash. Use startLine=1 and endLine=400 to read the whole sample file; 1 <= startLine <= endLine <= 400.",
@@ -306,6 +346,7 @@ function workspaceTools(
         ),
     }),
     tool({
+      errorFunction: (_context, error) => toolErrorResult(error),
       name: "search",
       description: "Search allowed files for a literal text query.",
       parameters: z
@@ -321,6 +362,7 @@ function workspaceTools(
         ),
     }),
     tool({
+      errorFunction: (_context, error) => toolErrorResult(error),
       name: "get_diff",
       description: "Read the cumulative diff from the frozen source baseline.",
       parameters: z.object({}).strict(),
@@ -332,6 +374,7 @@ function workspaceTools(
   return [
     ...common,
     tool({
+      errorFunction: (_context, error) => toolErrorResult(error),
       name: "write_file",
       description:
         "Write one allowed file. First call read_file and copy its returned hash exactly into expectedHash; use null only when creating a new file.",
@@ -348,14 +391,16 @@ function workspaceTools(
         ),
     }),
     tool({
+      errorFunction: (_context, error) => toolErrorResult(error),
       name: "apply_patch",
       description:
-        "Apply one bounded *** Begin Patch / *** Update File hunk to an allowed file.",
+        "Apply one hunk to an existing allowed file. Format: '*** Begin Patch\n*** Update File: src/todo.js\n@@\n unchanged line\n-removed line\n+added line\n*** End Patch'. Every hunk line starts with ' ', '-' or '+' and unchanged/removed lines must match the file exactly.",
       parameters: z.object({ patch: z.string() }).strict(),
       execute: ({ patch }) =>
         call("apply_patch", "bounded patch", () => writing.applyPatch(patch)),
     }),
     tool({
+      errorFunction: (_context, error) => toolErrorResult(error),
       name: "run_command",
       description: "Run only a registered sample command ID.",
       parameters: z

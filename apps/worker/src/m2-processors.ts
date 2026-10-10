@@ -10,6 +10,7 @@ import {
   developerDefinition,
   reviewerDefinition,
   classifyError,
+  toolErrorCode,
   type AgentExecution,
   type DeveloperAgentWorkspace,
   type ReadOnlyAgentWorkspace,
@@ -23,6 +24,7 @@ import {
   ArtifactStore,
   DockerWorkspaceBackend,
   RelativeFile,
+  WorkspaceError,
   demoTodoImplementation,
   diffSnapshots,
   dockerImageId,
@@ -80,6 +82,13 @@ async function recordTool(
   });
 }
 type LiveConfig = { key: string; model: string; timeoutMs?: number };
+/** Keeps workspace codes (e.g. EMPTY_DIFF) and known model usage instead of a generic provider code. */
+function stageError(error: unknown, result?: AgentExecution<unknown>) {
+  if (error instanceof ProviderError) return error;
+  if (error instanceof WorkspaceError)
+    return new ProviderError(toolErrorCode(error), false, result);
+  return classifyError(error, result);
+}
 function abortPromise(signal: AbortSignal, timeout: () => boolean) {
   return new Promise<never>((_, reject) =>
     signal.addEventListener(
@@ -127,6 +136,7 @@ export async function processDevelopment(
     },
     Math.max(100, Math.floor(repo.leaseMs / 3)),
   );
+  let result: AgentExecution<unknown> | undefined;
   try {
     const session = await repo.db.developmentSession.findUniqueOrThrow({
       where: { id: c.sessionId },
@@ -154,7 +164,6 @@ export async function processDevelopment(
       owned: () => own(repo, c),
     });
     await repo.workspaceActive(c);
-    let result: AgentExecution<unknown>;
     if (c.provider === "DEMO") {
       const prior = snapshot.files.find((f) => f.path === "src/todo.js");
       const current = prior ? Buffer.from(prior.content, "base64") : null;
@@ -255,8 +264,7 @@ export async function processDevelopment(
     ]);
     await repo.completeDevelopment(c, result, draft, candidate, diff);
   } catch (error) {
-    const e = error instanceof ProviderError ? error : classifyError(error);
-    await repo.failAgent(c, e).catch(() => undefined);
+    await repo.failAgent(c, stageError(error, result)).catch(() => undefined);
   } finally {
     clearInterval(beat);
     clearTimeout(timeout);
@@ -330,6 +338,7 @@ export async function processReview(
     },
     Math.max(100, Math.floor(repo.leaseMs / 3)),
   );
+  let result: AgentExecution<unknown> | undefined;
   try {
     const input = c.input as {
       candidateArtifactId?: string;
@@ -347,7 +356,6 @@ export async function processReview(
     )
       throw Error("STALE_REVIEW_INPUT");
     const frozen = await store.read(candidate.storageKey, candidate.hash); // Reviewer sees frozen bytes only.
-    let result: AgentExecution<unknown>;
     if (c.provider === "DEMO") {
       const title = input.task?.title ?? "";
       const verdict = /demo-block/i.test(title)
@@ -466,8 +474,7 @@ export async function processReview(
     const review = await store.publishText(JSON.stringify(result.output));
     await repo.completeReview(c, result, review);
   } catch (error) {
-    const e = error instanceof ProviderError ? error : classifyError(error);
-    await repo.failAgent(c, e).catch(() => undefined);
+    await repo.failAgent(c, stageError(error, result)).catch(() => undefined);
   } finally {
     clearInterval(beat);
     clearTimeout(timeout);

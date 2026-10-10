@@ -4,6 +4,7 @@ import {
   OpenAIAgentProvider,
   developerDefinition,
   reviewerDefinition,
+  toolErrorCode,
 } from "@company/agents";
 import { responseBody } from "./fixtures";
 
@@ -89,6 +90,77 @@ describe("M2 installed Agents SDK integration", () => {
     });
     expect(result.output.outcome).toBe("BLOCKED");
     expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it("returns fixed tool error codes and hints to the Developer instead of a generic retry", async () => {
+    const outputs: string[] = [];
+    const outcomes: string[] = [];
+    let count = 0;
+    const transport = vi.fn<typeof fetch>(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      for (const item of body.input ?? [])
+        if (item.type === "function_call_output") outputs.push(item.output);
+      count++;
+      const response = responseBody({
+        schemaVersion: "1",
+        outcome: "BLOCKED",
+        summary: "Could not write",
+        claimedChangedFiles: [],
+        claimedChecks: [],
+        remainingRisks: [],
+        blockingReason: "Write rejected",
+      });
+      if (count === 1)
+        response.output = [
+          {
+            id: "fc_1",
+            type: "function_call",
+            status: "completed",
+            call_id: "call_1",
+            name: "write_file",
+            arguments: JSON.stringify({
+              path: "src/todo.js",
+              content: "x",
+              expectedHash: "0".repeat(64),
+            }),
+          } as never,
+        ];
+      return new Response(JSON.stringify(response), { headers });
+    });
+    const workspace = {
+      listFiles: async () => [],
+      readFile: async () => ({ content: "", totalLines: 0 }),
+      search: async () => [],
+      getDiff: async () => ({ changedFiles: [], diff: "", truncated: false }),
+      writeFile: async () => {
+        throw Object.assign(new Error("/workspace/src/todo.js secret"), {
+          code: "STALE_FILE",
+        });
+      },
+      applyPatch: async () => ({ hash: "a" }),
+      runCommand: async () => ({ exitCode: 0 }),
+    };
+    const result = await new OpenAIAgentProvider(
+      "fake",
+      "gpt-4.1-mini",
+      transport,
+    ).execute(developerDefinition, developerInput, {
+      signal: new AbortController().signal,
+      runId: uuid(),
+      workspace,
+      onTool: async (e) => {
+        outcomes.push(e.outcome);
+      },
+    });
+    expect(result.output.outcome).toBe("BLOCKED");
+    expect(outcomes).toEqual(["STALE_FILE"]);
+    expect(outputs).toHaveLength(1);
+    const returned = JSON.parse(outputs[0]!);
+    expect(returned.error).toBe("STALE_FILE");
+    expect(returned.hint).toContain("read_file");
+    expect(outputs[0]).not.toContain("/workspace");
+    expect(toolErrorCode(new Error("ENOENT: /workspace/x"))).toBe(
+      "TOOL_FAILED",
+    );
   });
   it("allows Reviewer only readonly tools and records every SDK response and tool call", async () => {
     const calls: number[] = [];

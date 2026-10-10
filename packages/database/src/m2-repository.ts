@@ -74,7 +74,7 @@ export class M2Repository {
             ? this.models[agentType === "DEVELOPER" ? "developer" : "reviewer"]
             : null,
         promptVersion:
-          agentType === "DEVELOPER" ? "developer-v1" : "reviewer-v1",
+          agentType === "DEVELOPER" ? "developer-v2" : "reviewer-v1",
         inputSnapshot: json(input),
         inputCandidateHash:
           typeof input === "object" &&

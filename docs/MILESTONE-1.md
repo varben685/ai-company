@@ -68,3 +68,20 @@ M2 minimális következő lépése: izolált development workspace és jogosults
 ## Later live M1 evidence (2026-10-06)
 
 The `LIVE_VALIDATION_PENDING` statement above is the historical result at the time of the M1 commit. A later, explicitly authorized `corepack pnpm test:live` succeeded with a locally configured worker key. The persisted task `29c11a52-6f3a-46a7-ba14-50cbfec11fcd` has a succeeded OPENAI Product run `fc943a9c-46e0-4a46-8d22-b17beabe5b2a`, an immutable current plan `62c746bc-12a4-4500-a76a-66a9dd029af0`, and is waiting for a human plan decision. The provider reported `gpt-4.1-mini-2025-04-14`, 553 input tokens, 771 output tokens, zero cached input tokens. Its attempt cost remains unknown because the M1 pricing environment was not configured at that time. This is live Product planning evidence, not M2 Developer/Reviewer validation or human acceptance of that plan.
+
+## M2 Developer tool-error recovery (2026-10-08)
+
+Live Developer attempts `638b7051-8ea8-4381-8333-514e53228cbb` and `3cafc26a-cb7e-44ae-8a82-db4573c0b3e3` failed with `INVALID_STRUCTURED_OUTPUT` after repeated `INVALID_PATCH` and `STALE_FILE` tool failures. Cause: the Agents SDK default tool error function returns only a generic "try again" message, so the model could not see why `apply_patch`/`write_file` were rejected and repeated the same calls; afterwards any `WorkspaceError` (for example `EMPTY_DIFF` at freeze) fell through `classifyError` to `INVALID_STRUCTURED_OUTPUT`.
+
+Fix: Developer/Reviewer workspace tools return a fixed error code plus a static recovery hint to the model (raw messages and paths are never forwarded); the container file tool emits only fixed codes (`FILE_NOT_FOUND`, `DISALLOWED_PATH`, `STALE_FILE`, ...); `apply_patch` accepts an optional `@@` header, CRLF, `*** End of File` and blank context lines; worker stages keep `WorkspaceError` codes and known model usage; Developer prompt is now `developer-v2`.
+
+| Command | Result |
+| --- | --- |
+| `corepack pnpm typecheck` | PASS |
+| `corepack pnpm lint` | PASS |
+| `corepack pnpm test` | PASS, 64/64 |
+| `corepack pnpm build` | PASS |
+| `corepack pnpm test:e2e` | PASS, 2/2 DEMO workflows |
+| `git diff --check` | PASS |
+
+`corepack pnpm test:live:m2` was not run for this change; live Developer recovery remains pending validation.

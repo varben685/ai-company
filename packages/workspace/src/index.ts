@@ -100,7 +100,9 @@ export const RelativeFile = z
     "DISALLOWED_PATH",
   );
 function allowed(p: string) {
-  return RelativeFile.parse(p);
+  const parsed = RelativeFile.safeParse(p);
+  if (!parsed.success) throw new WorkspaceError("DISALLOWED_PATH");
+  return parsed.data;
 }
 const hashBytes = (b: Buffer | string) =>
   createHash("sha256").update(b).digest("hex");
@@ -338,11 +340,51 @@ process.stdin.on('end',()=>{try{
  const parts=q.path?.split('/')??[]; let current=base;
  for(const p of parts){current=path.join(current,p);if(fs.existsSync(current)){const s=fs.lstatSync(current);if(s.isSymbolicLink()||(!s.isDirectory()&&!s.isFile())||(s.isFile()&&s.nlink>1))throw Error('UNSAFE_FILE_TYPE')}}
  if(q.op==='list'){const result=[];for(const d of ['README.md','package.json','src','test']){const p=path.join(base,d);if(!fs.existsSync(p))continue;const s=fs.lstatSync(p);if(s.isSymbolicLink())throw Error('UNSAFE_FILE_TYPE');if(s.isFile())result.push(d);else for(const x of fs.readdirSync(p)){const f=d+'/'+x;if(!valid(f)||!fs.lstatSync(path.join(base,f)).isFile())throw Error('UNSAFE_FILE_TYPE');result.push(f)}}process.stdout.write(JSON.stringify(result.sort().slice(0,Math.min(q.limit??100,200))));}
- else if(q.op==='read'){const b=fs.readFileSync(target);if(b.length>262144)throw Error('FILE_TOO_LARGE');const lines=b.toString('utf8').split('\n');const hash=require('node:crypto').createHash('sha256').update(b).digest('hex');process.stdout.write(JSON.stringify({content:lines.slice(q.startLine-1,q.endLine).join('\n'),totalLines:lines.length,hash}));}
+ else if(q.op==='read'){if(!fs.existsSync(target))throw Error('FILE_NOT_FOUND');const b=fs.readFileSync(target);if(b.length>262144)throw Error('FILE_TOO_LARGE');const lines=b.toString('utf8').split('\n');const hash=require('node:crypto').createHash('sha256').update(b).digest('hex');process.stdout.write(JSON.stringify({content:lines.slice(q.startLine-1,q.endLine).join('\n'),totalLines:lines.length,hash}));}
  else if(q.op==='write'){if(Buffer.byteLength(q.content,'utf8')>262144)throw Error('FILE_TOO_LARGE');const old=fs.existsSync(target)?fs.readFileSync(target):null;const h=require('node:crypto').createHash('sha256');if((old?h.update(old).digest('hex'):null)!==q.expectedHash)throw Error('STALE_FILE');fs.mkdirSync(path.dirname(target),{recursive:true});const tmp=target+'.tmp-'+process.pid;fs.writeFileSync(tmp,q.content,{flag:'wx',mode:0o666});fs.renameSync(tmp,target);process.stdout.write(JSON.stringify({hash:require('node:crypto').createHash('sha256').update(q.content).digest('hex')}));}
  else throw Error('UNKNOWN_OPERATION');
 }catch(e){process.stderr.write(String(e.message).slice(0,120));process.exitCode=2}});
 `;
+
+export type BoundedPatch = { path: string; old: string[]; next: string[] };
+/** Parses one `*** Update File` hunk; the `@@` header is optional and blank lines are blank context. */
+export function parseBoundedPatch(patch: string): BoundedPatch {
+  if (patch.length > 65536) throw new WorkspaceError("PATCH_TOO_LARGE");
+  const match =
+    /^\*\*\* Begin Patch\n\*\*\* Update File: ([^\n]+)\n([\s\S]*?)\n?\*\*\* End Patch$/.exec(
+      patch.replace(/\r\n/g, "\n").trim(),
+    );
+  if (!match) throw new WorkspaceError("INVALID_PATCH");
+  const p = allowed(match[1]!.trim());
+  const hunk = match[2]!.split("\n").filter((x) => x !== "*** End of File");
+  while (hunk.length && !hunk[hunk.length - 1]!.trim()) hunk.pop();
+  const headers = hunk.filter((x) => x.startsWith("@@")).length;
+  if (headers > 1) throw new WorkspaceError("PATCH_ONE_HUNK_ONLY");
+  if (headers === 1 && !hunk[0]!.startsWith("@@"))
+    throw new WorkspaceError("INVALID_PATCH");
+  const old: string[] = [],
+    next: string[] = [];
+  for (const line of headers ? hunk.slice(1) : hunk) {
+    if (line !== "" && !/^[ +\-]/.test(line))
+      throw new WorkspaceError("INVALID_PATCH");
+    if (line[0] !== "+") old.push(line.slice(1));
+    if (line[0] !== "-") next.push(line.slice(1));
+  }
+  if (!old.length) throw new WorkspaceError("INVALID_PATCH");
+  return { path: p, old, next };
+}
+export function applyBoundedPatch(content: string, patch: BoundedPatch) {
+  const lines = content.split("\n");
+  let at = -1;
+  for (let i = 0; i <= lines.length - patch.old.length; i++)
+    if (patch.old.every((x, j) => lines[i + j] === x)) {
+      if (at !== -1) throw new WorkspaceError("AMBIGUOUS_PATCH");
+      at = i;
+    }
+  if (at < 0) throw new WorkspaceError("STALE_PATCH");
+  lines.splice(at, patch.old.length, ...patch.next);
+  return lines.join("\n");
+}
 
 export class DockerWorkspaceBackend {
   constructor(readonly root = path.join(localRoot, "m2-workspaces")) {}
@@ -444,8 +486,13 @@ export class DockerWorkspaceBackend {
       await this.terminate(h);
       throw new WorkspaceError("TOOL_TIMEOUT");
     }
-    if (r.code !== 0)
-      throw new WorkspaceError(r.output.trim().slice(0, 120) || "TOOL_FAILED");
+    if (r.code !== 0) {
+      // Only fixed error codes leave the container; raw fs messages may contain paths.
+      const code = r.output.trim();
+      throw new WorkspaceError(
+        /^[A-Z][A-Z0-9_]{1,79}$/.test(code) ? code : "TOOL_FAILED",
+      );
+    }
     return JSON.parse(r.output) as unknown;
   }
   async runCommand(
@@ -509,45 +556,18 @@ export class DockerWorkspaceBackend {
     return matches;
   }
   async applyPatch(h: WorkspaceHandle, patch: string) {
-    if (patch.length > 65536) throw new WorkspaceError("PATCH_TOO_LARGE");
-    const match =
-      /^\*\*\* Begin Patch\n\*\*\* Update File: ([^\n]+)\n([\s\S]+)\*\*\* End Patch\s*$/.exec(
-        patch,
-      );
-    if (!match) throw new WorkspaceError("INVALID_PATCH");
-    const p = allowed(match[1]!);
+    const parsed = parseBoundedPatch(patch);
     const read = (await this.tool(h, {
       op: "read",
-      path: p,
+      path: parsed.path,
       startLine: 1,
       endLine: 400,
     })) as { content: string; totalLines: number; hash: string };
     if (read.totalLines > 400) throw new WorkspaceError("PATCH_FILE_TOO_LONG");
-    const lines = read.content.split("\n");
-    const hunk = match[2]!.split("\n").filter((x) => x !== "");
-    if (hunk.filter((x) => x.startsWith("@@")).length !== 1)
-      throw new WorkspaceError("PATCH_ONE_HUNK_ONLY");
-    const old: string[] = [],
-      next: string[] = [];
-    for (const line of hunk) {
-      if (line.startsWith("@@")) continue;
-      if (!/^[ +\-]/.test(line)) throw new WorkspaceError("INVALID_PATCH");
-      if (line[0] !== "+") old.push(line.slice(1));
-      if (line[0] !== "-") next.push(line.slice(1));
-    }
-    if (!old.length) throw new WorkspaceError("INVALID_PATCH");
-    let at = -1;
-    for (let i = 0; i <= lines.length - old.length; i++)
-      if (old.every((x, j) => lines[i + j] === x)) {
-        if (at !== -1) throw new WorkspaceError("AMBIGUOUS_PATCH");
-        at = i;
-      }
-    if (at < 0) throw new WorkspaceError("STALE_PATCH");
-    lines.splice(at, old.length, ...next);
     return this.tool(h, {
       op: "write",
-      path: p,
-      content: lines.join("\n"),
+      path: parsed.path,
+      content: applyBoundedPatch(read.content, parsed),
       expectedHash: read.hash,
     });
   }

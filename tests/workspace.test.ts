@@ -6,9 +6,11 @@ import path from "node:path";
 import {
   ArtifactStore,
   DockerWorkspaceBackend,
+  applyBoundedPatch,
   builtinSource,
   collectSnapshot,
   dockerImageId,
+  parseBoundedPatch,
   snapshotHash,
   tarSnapshot,
   validateCandidate,
@@ -240,4 +242,97 @@ describe("real Docker workspace boundary", () => {
       await fs.rm(root, { recursive: true, force: true });
     }
   }, 120000);
+});
+
+describe("bounded patch format", () => {
+  const source = "let a = 1;\n\nexport function f() {\n  return a;\n}\n";
+  it("accepts an optional @@ header, CRLF and blank context lines", () => {
+    for (const header of ["@@\n", "@@ export function f\n", ""]) {
+      const patch = parseBoundedPatch(
+        `*** Begin Patch\r\n*** Update File: src/todo.js\r\n${header} let a = 1;\r\n\r\n export function f() {\r\n-  return a;\r\n+  return a + 1;\r\n*** End of File\r\n*** End Patch\r\n`,
+      );
+      expect(patch.path).toBe("src/todo.js");
+      expect(applyBoundedPatch(source, patch)).toBe(
+        source.replace("return a;", "return a + 1;"),
+      );
+    }
+  });
+  it("rejects malformed, multi-hunk, context-free, stale and ambiguous patches", () => {
+    const wrap = (body: string, file = "src/todo.js") =>
+      `*** Begin Patch\n*** Update File: ${file}\n${body}\n*** End Patch`;
+    expect(() => parseBoundedPatch("--- a/src/todo.js\n+++ b/src/todo.js")).toThrow(
+      "INVALID_PATCH",
+    );
+    expect(() => parseBoundedPatch(wrap("+only added"))).toThrow(
+      "INVALID_PATCH",
+    );
+    expect(() => parseBoundedPatch(wrap("@@\n a\n@@\n b"))).toThrow(
+      "PATCH_ONE_HUNK_ONLY",
+    );
+    expect(() => parseBoundedPatch(wrap(" a", "../etc/passwd"))).toThrow(
+      "DISALLOWED_PATH",
+    );
+    expect(() =>
+      applyBoundedPatch(source, parseBoundedPatch(wrap("-missing"))),
+    ).toThrow("STALE_PATCH");
+    expect(() =>
+      applyBoundedPatch("x\nx\n", parseBoundedPatch(wrap("-x\n+y"))),
+    ).toThrow("AMBIGUOUS_PATCH");
+  });
+  it("reports fixed file tool codes from the container", async () => {
+    const { snapshot } = await builtinSource();
+    const backend = new DockerWorkspaceBackend();
+    const h = await backend.prepareAttempt({
+      attemptId: randomUUID(),
+      token: randomUUID(),
+      snapshot,
+      owned: async () => true,
+    });
+    try {
+      await expect(
+        backend.tool(h, {
+          op: "read",
+          path: "src/missing.js",
+          startLine: 1,
+          endLine: 400,
+        }),
+      ).rejects.toMatchObject({ code: "FILE_NOT_FOUND" });
+      await expect(
+        backend.tool(h, {
+          op: "read",
+          path: "todoStore.js",
+          startLine: 1,
+          endLine: 400,
+        }),
+      ).rejects.toMatchObject({ code: "DISALLOWED_PATH" });
+      const read = (await backend.tool(h, {
+        op: "read",
+        path: "src/todo.js",
+        startLine: 1,
+        endLine: 400,
+      })) as { hash: string };
+      await expect(
+        backend.tool(h, {
+          op: "write",
+          path: "src/todo.js",
+          content: "export {};\n",
+          expectedHash: "0".repeat(64),
+        }),
+      ).rejects.toMatchObject({ code: "STALE_FILE" });
+      await backend.applyPatch(
+        h,
+        "*** Begin Patch\n*** Update File: src/todo.js\n@@\n let nextId = 1;\n+// patched\n*** End Patch",
+      );
+      await expect(
+        backend.tool(h, {
+          op: "write",
+          path: "src/todo.js",
+          content: "export {};\n",
+          expectedHash: read.hash,
+        }),
+      ).rejects.toMatchObject({ code: "STALE_FILE" });
+    } finally {
+      await backend.cleanup(h);
+    }
+  }, 60000);
 });
